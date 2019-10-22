@@ -1,0 +1,8 @@
+#compile and debug folder
+x64/
+
+#cache folder
+.vs/cuda_steganography/v16/ipch/
+
+#debug information
+*.pdb
