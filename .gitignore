@@ -2,7 +2,7 @@
 x64/
 
 #cache folder
-.vs/cuda_steganography/v16/ipch/
+.vs/
 
 #debug information
 *.pdb
