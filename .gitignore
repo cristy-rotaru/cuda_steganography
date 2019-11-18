@@ -6,3 +6,5 @@ x64/
 
 #debug information
 *.pdb
+
+*.dll
