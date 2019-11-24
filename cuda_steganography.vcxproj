@@ -86,9 +86,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="kernel.cu" />
+    <CudaCompile Include="steganographyOnCuda.cu" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="image.jpg" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="steganographyOnCuda.cuh" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

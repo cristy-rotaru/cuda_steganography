@@ -1,7 +1,6 @@
-#include "cuda_runtime.h"
-#include "device_launch_parameters.h"
-#include <opencv2/opencv.hpp>
+#include "steganographyOnCuda.cuh"
 #include <exception>
+#include <fstream>
 
 //#define VERBOSE
 
@@ -260,53 +259,67 @@ int reverseSteganography(cv::Mat image, std::string& decodedMessage)
 
 int main(int argc, char **argv)
 {
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-	cudaEventCreate(&start1);
-	cudaEventCreate(&stop1);
-
 	try
 	{
-		cv::Mat image = cv::imread("C:/Users/Sergiu/Desktop/cuda_steganography/x64/Debug/image.jpg");
-		cv::Mat imageCopy = cv::imread("C:/Users/Sergiu/Desktop/cuda_steganography/x64/Debug/image.jpg");
+		cv::Mat image = cv::imread("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/test_images/solid_color_h00FF00.png");
+
 		if (image.data == NULL)
 		{
 			std::cout << "NULL image\n";
 			return 1;
 		}
-		/*for (int i = 0; i < 16; i++)
+		uint32_t maxStreamSize = analyzeImage_CPU(image.data, image.size().height, image.size().width);
+
+		std::ifstream fileToHide("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/DOCS/Raport_PGPU.pdf", std::ios_base::in | std::ios_base::binary);
+		if (!fileToHide)
 		{
-			std::cout << (int)image.data[i] << ' ';
+			std::cout << "Can't open file" << std::endl;
+			return 2;
 		}
-		std::cout << '\n';*/
-		std::string strToCode = "Am reusit oare sa fac sa mearga aceasta varianta super basic de steganografie? Am sa fac acest mesaj mult mai lung ca sa pot verifica mai bine cat de rapid ascunde GPU-ul. Ca momentan mesajul este minuscul.\
-Oare de ce e asa de greu de gasit avantajele unui GPU? Pana acum mereu a fost mai rapid CPU-ul. Which is weird. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. \
-Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. \
-Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. \
-Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. \
-Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta. Hai sa dau copy paste la asta.";
+		// computing file size
+		std::streampos sPos = fileToHide.tellg();
+		fileToHide.seekg(0, std::ios::end);
+		sPos = fileToHide.tellg() - sPos;
+		fileToHide.seekg(0);
+		uint32_t streamSize = sPos;
 
-		std::cout << strToCode.length() << '\n';
-		TIME_EVENT(basicSteganography(image, strToCode), "Elapsed time for GPU: ", start, stop);
-
-		TIME_EVENT(CPU_basicSteganography(imageCopy, strToCode), "Elapsed time for CPU: ", start, stop);
-		for (int i = 0; i < 16; i++)
+		if (maxStreamSize < streamSize)
 		{
-			VERBOSE_PRINT(std::cout << ((int)imageCopy.data[i] & 0x01) << ' ';)
+			std::cout << "The selected file does not fit inside the image" << std::endl;
+			return 3;
 		}
-		VERBOSE_PRINT(std::cout << '\n';)
 
-		std::string str;
-		std::string str2;
-		reverseSteganography(image, str);
-		reverseSteganography(imageCopy, str2);
+		uint8_t* streamToHide = new uint8_t[streamSize + 8]; // add 8 for header
+		streamToHide[0] = 's';
+		streamToHide[1] = 't';
+		streamToHide[2] = 'e';
+		streamToHide[3] = 'g';
+		streamToHide[4] = streamSize >> 24;
+		streamToHide[5] = streamSize >> 16;
+		streamToHide[6] = streamSize >> 8;
+		streamToHide[7] = streamSize;
+		if (!fileToHide.read((char*)&streamToHide[8], streamSize));
 
-		std::cout << "Decode from CUDA: " << str << '\n';
-		std::cout<< "Decode from CPU: " << str2 << '\n';
-		cv::namedWindow("CUDAimage", cv::WINDOW_NORMAL);
-		cv::imshow("CUDAimage", image);
-		cv::namedWindow("CPU_image", cv::WINDOW_NORMAL);
-		cv::imshow("CPU_image", imageCopy);
+		for (int i = 0; i < 64; ++i)
+		{
+			std::cout << (int)streamToHide[i] << " ";
+		}
+		std::cout << std::endl;
+
+		hide_CPU(streamToHide, streamSize + 8);
+
+		cv::imwrite("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result.bmp", image);
+		
+		cv::Mat nextImage = cv::imread("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result.bmp");
+		cleanUp_CPU();
+
+		analyzeImage_CPU(nextImage.data, nextImage.size().height, nextImage.size().width);
+
+		for (int i = 0; i < 256; ++i)
+		{
+			std::cout << (int)nextImage.data[i] << " ";
+		}
+
 		cv::waitKey(0);
 	}
 	catch (std::exception exc)
