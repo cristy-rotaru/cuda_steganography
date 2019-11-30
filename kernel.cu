@@ -261,7 +261,7 @@ int main(int argc, char **argv)
 {
 	try
 	{
-		cv::Mat image = cv::imread("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/test_images/solid_color_h00FF00.png");
+		cv::Mat image = cv::imread("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/test_images/checkerboard00.jpg");
 
 		if (image.data == NULL)
 		{
@@ -269,6 +269,7 @@ int main(int argc, char **argv)
 			return 1;
 		}
 		uint32_t maxStreamSize = analyzeImage_CPU(image.data, image.size().height, image.size().width);
+		std::cout << "Max stream size: " << maxStreamSize << std::endl;
 
 		std::ifstream fileToHide("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/DOCS/Raport_PGPU.pdf", std::ios_base::in | std::ios_base::binary);
 		if (!fileToHide)
@@ -299,7 +300,9 @@ int main(int argc, char **argv)
 		streamToHide[6] = streamSize >> 8;
 		streamToHide[7] = streamSize;
 		if (!fileToHide.read((char*)&streamToHide[8], streamSize));
+		fileToHide.close();
 
+		std::cout << "First 64 bytes of the stream data: ";
 		for (int i = 0; i < 64; ++i)
 		{
 			std::cout << (int)streamToHide[i] << " ";
@@ -307,18 +310,34 @@ int main(int argc, char **argv)
 		std::cout << std::endl;
 
 		hide_CPU(streamToHide, streamSize + 8);
+		delete[] streamToHide;
+
+		std::cout << "First 64 bytes of the processed image: ";
+		for (int i = 0; i < 64; ++i)
+		{
+			std::cout << (int)image.data[i] << " ";
+		}
+		std::cout << std::endl;
 
 		cv::imwrite("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result.bmp", image);
 		
 		cv::Mat nextImage = cv::imread("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result.bmp");
 		cleanUp_CPU();
 
-		analyzeImage_CPU(nextImage.data, nextImage.size().height, nextImage.size().width);
-
-		for (int i = 0; i < 256; ++i)
+		std::cout << "First 64 bytes of the image from disk: ";
+		for (int i = 0; i < 64; ++i)
 		{
 			std::cout << (int)nextImage.data[i] << " ";
 		}
+		std::cout << std::endl;
+
+		analyzeImage_CPU(nextImage.data, nextImage.size().height, nextImage.size().width);
+		streamSize = extract_CPU(streamToHide) - 8;
+
+		std::ofstream recoveredFile("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/raport.pdf", std::ios_base::out | std::ios_base::binary);
+		recoveredFile.write((char*)&streamToHide[8], streamSize);
+		recoveredFile.flush();
+		recoveredFile.close();
 
 		cv::waitKey(0);
 	}
