@@ -95,112 +95,43 @@ uint32_t analyzeImage_CPU(uint8_t* imageData, size_t height, size_t width)
 uint8_t* hide_CPU(uint8_t* stream, size_t streamSize)
 {
 	size_t bitsWritten = 0;
+	uint8_t* imageData = (uint8_t*)CPU_imageData;
+	uint8_t* pixelWeight = (uint8_t*)CPU_pixelWeight;
 
-	for (size_t i = 0; i < CPU_height * CPU_width; ++i)
+	for (size_t i = 0; i < CPU_height * CPU_width * 3; ++i)
 	{
-		size_t currentIndex = i;
-		color_t weight = CPU_pixelWeight[currentIndex];
-
-		uint8_t maskRed = (1 << weight.RED) - 1;
-		uint8_t maskGreen = (1 << weight.GREEN) - 1;
-		uint8_t maskBlue = (1 << weight.BLUE) - 1;
-
-		uint8_t writeRed = 0;
-		uint8_t writeGreen = 0;
-		uint8_t writeBlue = 0;
-
 		size_t streamIndex = bitsWritten >> 3;
 		uint8_t bitIndex = bitsWritten & 0x07;
 
-		// red channel
-		if (8 - bitIndex >= weight.RED)
-		{// all bits can be taken from the current entry
-			uint8_t shift = 8 - bitIndex - weight.RED;
-			writeRed = (stream[streamIndex] & (maskRed << shift)) >> shift;
+		if (streamIndex >= streamSize)
+		{
+			return imageData;
+		}
+
+		uint8_t weight = pixelWeight[i];
+		uint8_t mask = (1 << weight) - 1;
+		uint8_t toWrite = 0;
+
+		if (8 - bitIndex >= weight)
+		{
+			uint8_t shift = 8 - bitIndex - weight;
+			toWrite = (stream[streamIndex] & (mask << shift)) >> shift;
 		}
 		else
 		{
-			uint8_t shift = weight.RED + bitIndex - 8;
-			writeRed = (stream[streamIndex] & (maskRed >> shift)) << shift;
-			shift = 8 - shift;
+			uint8_t shift = weight + bitIndex - 8;
+			toWrite = (stream[streamIndex] & (mask >> shift)) << shift;
 			if (streamIndex < streamSize - 1)
 			{
-				writeRed |= (stream[streamIndex + 1] & (maskRed << shift)) >> shift;
-				std::cout << " " << std::hex << (int)stream[streamIndex + 1];
+				shift = 8 - shift;
+				toWrite |= (stream[streamIndex + 1] & (mask << shift)) >> shift;
 			}
 		}
 
-		CPU_imageData[currentIndex].RED &= (~maskRed);
-		CPU_imageData[currentIndex].RED |= maskRed & writeRed;
-		bitsWritten += weight.RED;
+		imageData[i] &= ~mask;
+		imageData[i] |= mask & toWrite;
 
-		streamIndex = bitsWritten >> 3;
-		bitIndex = bitsWritten & 0x07;
-
-		if (streamIndex >= streamSize)
-		{
-			return (uint8_t*)CPU_imageData;
-		}
-
-		// green channel
-		if (8 - bitIndex >= weight.GREEN)
-		{// all bits can be taken from the current entry
-			uint8_t shift = 8 - bitIndex - weight.GREEN;
-			writeGreen = (stream[streamIndex] & (maskGreen << shift)) >> shift;
-		}
-		else
-		{
-			uint8_t shift = weight.GREEN + bitIndex - 8;
-			writeGreen = (stream[streamIndex] & (maskGreen >> shift)) << shift;
-			shift = 8 - shift;
-			if (streamIndex < streamSize - 1)
-			{
-				writeGreen |= (stream[streamIndex + 1] & (maskGreen << shift)) >> shift;
-				std::cout << " " << std::hex << (int)stream[streamIndex + 1];
-			}
-		}
-
-		CPU_imageData[currentIndex].GREEN &= (~maskGreen);
-		CPU_imageData[currentIndex].GREEN |= maskGreen & writeGreen;
-		bitsWritten += weight.GREEN;
-
-		streamIndex = bitsWritten >> 3;
-		bitIndex = bitsWritten & 0x07;
-
-		if (streamIndex >= streamSize)
-		{
-			return (uint8_t*)CPU_imageData;
-		}
-
-		// blue channel
-		if (8 - bitIndex >= weight.BLUE)
-		{// all bits can be taken from the current entry
-			uint8_t shift = 8 - bitIndex - weight.BLUE;
-			writeBlue = (stream[streamIndex] & (maskBlue << shift)) >> shift;
-		}
-		else
-		{
-			uint8_t shift = weight.BLUE + bitIndex - 8;
-			writeBlue = (stream[streamIndex] & (maskBlue >> shift)) << shift;
-			shift = 8 - shift;
-			if (streamIndex < streamSize - 1)
-			{
-				writeBlue |= (stream[streamIndex + 1] & (maskBlue << shift)) >> shift;
-				std::cout << " " << std::hex << (int)stream[streamIndex + 1];
-			}
-		}
-
-		CPU_imageData[currentIndex].BLUE &= (~maskBlue);
-		CPU_imageData[currentIndex].BLUE |= maskBlue & writeBlue;
-		bitsWritten += weight.BLUE;
-
-		streamIndex = bitsWritten >> 3;
-		bitIndex = bitsWritten & 0x07;
-
-		if (streamIndex >= streamSize)
-		{
-			return (uint8_t*)CPU_imageData;
-		}
+		bitsWritten += weight;
 	}
 }
 
@@ -212,81 +143,36 @@ uint32_t extract_CPU(uint8_t*& stream)
 	size_t bitsRead = 0;
 	size_t imageIndex = 0;
 
+	uint8_t* imageData = (uint8_t*)CPU_imageData;
+	uint8_t* pixelWeight = (uint8_t*)CPU_pixelWeight;
+
 	while (bitsRead < 64)
 	{
-		color_t pixelData = CPU_imageData[imageIndex];
-		color_t weight = CPU_pixelWeight[imageIndex];
-
 		size_t streamIndex = bitsRead >> 3;
-		size_t bitIndex = bitsRead & 0x07;
+		uint8_t bitIndex = bitsRead & 0x07;
 
-		uint8_t maskRed = (1 << weight.RED) - 1;
-		uint8_t maskGreen = (1 << weight.GREEN) - 1;
-		uint8_t maskBlue = (1 << weight.BLUE) - 1;
+		uint8_t pixelData = imageData[imageIndex];
+		uint8_t weight = pixelWeight[imageIndex];
+		uint8_t mask = (1 << weight) - 1;
+		uint8_t valuableData = pixelData & mask;
 
-		uint8_t readRed = pixelData.RED & maskRed;
-		uint8_t readGreen = pixelData.GREEN & maskGreen;
-		uint8_t readBlue = pixelData.BLUE & maskBlue;
-
-		//red
-		if (8 - bitIndex >= weight.RED)
+		if (8 - bitIndex >= weight)
 		{
-			uint8_t shift = 8 - bitIndex - weight.RED;
-			header[streamIndex] &= ~(maskRed << shift); // ignore this warning | the compiler is retarded
-			header[streamIndex] |= readRed << shift;
+			uint8_t shift = 8 - bitIndex - weight;
+			header[streamIndex] &= ~(mask << shift); // ignore this warning | the compiler is retarded
+			header[streamIndex] |= valuableData << shift;
 		}
 		else
 		{
-			uint8_t shift = weight.RED + bitIndex - 8;
-			header[streamIndex] &= ~(maskRed >> shift);
-			header[streamIndex] |= readRed >> shift;
+			uint8_t shift = weight + bitIndex - 8;
+			header[streamIndex] &= ~(mask >> shift);
+			header[streamIndex] |= valuableData >> shift;
 			shift = 8 - shift;
-			header[streamIndex + 1] &= ~(maskRed << shift);
-			header[streamIndex + 1] |= readRed << shift;
+			header[streamIndex + 1] &= ~(mask << shift);
+			header[streamIndex + 1] |= valuableData << shift;
 		}
-		bitsRead += weight.RED;
 
-		streamIndex = bitsRead >> 3;
-		bitIndex = bitsRead & 0x07;
-
-		//green
-		if (8 - bitIndex >= weight.GREEN)
-		{
-			uint8_t shift = 8 - bitIndex - weight.GREEN;
-			header[streamIndex] &= ~(maskGreen << shift); // ignore this warning | the compiler is retarded
-			header[streamIndex] |= readGreen << shift;
-		}
-		else
-		{
-			uint8_t shift = weight.GREEN + bitIndex - 8;
-			header[streamIndex] &= ~(maskGreen >> shift);
-			header[streamIndex] |= readGreen >> shift;
-			shift = 8 - shift;
-			header[streamIndex + 1] &= ~(maskGreen << shift);
-			header[streamIndex + 1] |= readGreen << shift;
-		}
-		bitsRead += weight.GREEN;
-
-		streamIndex = bitsRead >> 3;
-		bitIndex = bitsRead & 0x07;
-
-		//green
-		if (8 - bitIndex >= weight.BLUE)
-		{
-			uint8_t shift = 8 - bitIndex - weight.BLUE;
-			header[streamIndex] &= ~(maskBlue << shift); // ignore this warning | the compiler is retarded
-			header[streamIndex] |= readBlue << shift;
-		}
-		else
-		{
-			uint8_t shift = weight.BLUE + bitIndex - 8;
-			header[streamIndex] &= ~(maskBlue >> shift);
-			header[streamIndex] |= readBlue >> shift;
-			shift = 8 - shift;
-			header[streamIndex + 1] &= ~(maskBlue << shift);
-			header[streamIndex + 1] |= readBlue << shift;
-		}
-		bitsRead += weight.BLUE;
+		bitsRead += weight;
 
 		++imageIndex;
 	}
@@ -308,118 +194,44 @@ uint32_t extract_CPU(uint8_t*& stream)
 
 	for (;;)
 	{
-		color_t pixelData = CPU_imageData[imageIndex];
-		color_t weight = CPU_pixelWeight[imageIndex];
-
 		size_t streamIndex = bitsRead >> 3;
 		size_t bitIndex = bitsRead & 0x07;
 
-		uint8_t maskRed = (1 << weight.RED) - 1;
-		uint8_t maskGreen = (1 << weight.GREEN) - 1;
-		uint8_t maskBlue = (1 << weight.BLUE) - 1;
-
-		uint8_t readRed = pixelData.RED & maskRed;
-		uint8_t readGreen = pixelData.GREEN & maskGreen;
-		uint8_t readBlue = pixelData.BLUE & maskBlue;
-
-		//red
-		if (8 - bitIndex >= weight.RED)
+		if (streamIndex >= streamSize)
 		{
-			uint8_t shift = 8 - bitIndex - weight.RED;
-			stream[streamIndex] &= ~(maskRed << shift); // ignore this warning | the compiler is retarded
-			stream[streamIndex] |= readRed << shift;
+			return streamSize;
+		}
+
+		uint8_t pixelData = imageData[imageIndex];
+		uint8_t weight = pixelWeight[imageIndex];
+		uint8_t mask = (1 << weight) - 1;
+		uint8_t valuableData = pixelData & mask;
+
+		if (8 - bitIndex >= weight)
+		{
+			uint8_t shift = 8 - bitIndex - weight;
+			stream[streamIndex] &= ~(mask << shift); // ignore this warning | the compiler is retarded
+			stream[streamIndex] |= valuableData << shift;
 		}
 		else
 		{
-			uint8_t shift = weight.RED + bitIndex - 8;
-			stream[streamIndex] &= ~(maskRed >> shift);
-			stream[streamIndex] |= readRed >> shift;
-			shift = 8 - shift;
+			uint8_t shift = weight + bitIndex - 8;
+			stream[streamIndex] &= ~(mask >> shift);
+			stream[streamIndex] |= valuableData >> shift;
+
 			if (streamIndex < streamSize - 1)
 			{
-				stream[streamIndex + 1] &= ~(maskRed << shift);
-				stream[streamIndex + 1] |= readRed << shift;
+				shift = 8 - shift;
+				stream[streamIndex + 1] &= ~(mask << shift);
+				stream[streamIndex + 1] |= valuableData << shift;
 			}
 			else
 			{
 				return streamSize;
 			}
 		}
-		bitsRead += weight.RED;
 
-		streamIndex = bitsRead >> 3;
-		bitIndex = bitsRead & 0x07;
-
-		if (streamIndex >= streamSize)
-		{
-			return streamSize;
-		}
-
-		//green
-		if (8 - bitIndex >= weight.GREEN)
-		{
-			uint8_t shift = 8 - bitIndex - weight.GREEN;
-			stream[streamIndex] &= ~(maskGreen << shift); // ignore this warning | the compiler is retarded
-			stream[streamIndex] |= readGreen << shift;
-		}
-		else
-		{
-			uint8_t shift = weight.GREEN + bitIndex - 8;
-			stream[streamIndex] &= ~(maskGreen >> shift);
-			stream[streamIndex] |= readGreen >> shift;
-			shift = 8 - shift;
-			if (streamIndex < streamSize - 1)
-			{
-				stream[streamIndex + 1] &= ~(maskGreen << shift);
-				stream[streamIndex + 1] |= readGreen << shift;
-			}
-			else
-			{
-				return streamSize;
-			}
-		}
-		bitsRead += weight.GREEN;
-
-		streamIndex = bitsRead >> 3;
-		bitIndex = bitsRead & 0x07;
-
-		if (streamIndex >= streamSize)
-		{
-			return streamSize;
-		}
-
-		//green
-		if (8 - bitIndex >= weight.BLUE)
-		{
-			uint8_t shift = 8 - bitIndex - weight.BLUE;
-			stream[streamIndex] &= ~(maskBlue << shift); // ignore this warning | the compiler is retarded
-			stream[streamIndex] |= readBlue << shift;
-		}
-		else
-		{
-			uint8_t shift = weight.BLUE + bitIndex - 8;
-			stream[streamIndex] &= ~(maskBlue >> shift);
-			stream[streamIndex] |= readBlue >> shift;
-			shift = 8 - shift;
-			if (streamIndex < streamSize - 1)
-			{
-				stream[streamIndex + 1] &= ~(maskBlue << shift);
-				stream[streamIndex + 1] |= readBlue << shift;
-			}
-			else
-			{
-				return streamSize;
-			}
-		}
-		bitsRead += weight.BLUE;
-
-		streamIndex = bitsRead >> 3;
-		bitIndex = bitsRead & 0x07;
-
-		if (streamIndex >= streamSize)
-		{
-			return streamSize;
-		}
+		bitsRead += weight;
 
 		++imageIndex;
 	}
