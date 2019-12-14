@@ -261,7 +261,7 @@ int main(int argc, char **argv)
 {
 	try
 	{
-		cv::Mat image = cv::imread("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/test_images/checkerboard00.jpg");
+		cv::Mat image = cv::imread("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/test_images/landscape02.jpg");
 
 		if (image.data == NULL)
 		{
@@ -271,7 +271,11 @@ int main(int argc, char **argv)
 		uint32_t maxStreamSize = analyzeImage_CPU(image.data, image.size().height, image.size().width);
 		std::cout << "Max stream size: " << maxStreamSize << std::endl;
 
-		std::ifstream fileToHide("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/DOCS/Raport_PGPU.pdf", std::ios_base::in | std::ios_base::binary);
+		startImageAnalisys_GPU(image.data, image.size().height, image.size().width);
+
+		system("pause");
+
+		std::ifstream fileToHide("D:/Music/Back in Time.mp3", std::ios_base::in | std::ios_base::binary);
 		if (!fileToHide)
 		{
 			std::cout << "Can't open file" << std::endl;
@@ -284,7 +288,7 @@ int main(int argc, char **argv)
 		fileToHide.seekg(0);
 		uint32_t streamSize = sPos;
 
-		if (maxStreamSize < streamSize)
+		if (maxStreamSize < streamSize + 8)
 		{
 			std::cout << "The selected file does not fit inside the image" << std::endl;
 			return 3;
@@ -334,7 +338,7 @@ int main(int argc, char **argv)
 		analyzeImage_CPU(nextImage.data, nextImage.size().height, nextImage.size().width);
 		streamSize = extract_CPU(streamToHide) - 8;
 
-		std::ofstream recoveredFile("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/raport.pdf", std::ios_base::out | std::ios_base::binary);
+		std::ofstream recoveredFile("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result.mp3", std::ios_base::out | std::ios_base::binary);
 		recoveredFile.write((char*)&streamToHide[8], streamSize);
 		recoveredFile.flush();
 		recoveredFile.close();

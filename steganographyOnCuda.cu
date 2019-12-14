@@ -2,7 +2,7 @@
 #include "device_launch_parameters.h"
 #include <opencv2/opencv.hpp>
 
-#define getDelta(v1, v2) ((v1) > (v2)) ? ((((v1) & 0xF) >> 4) - (((v2) & 0xF) >> 4)) : ((((v2) & 0xF) >> 4) - (((v1) & 0xF) >> 4))
+#define getDelta(v1, v2) ((v1) > (v2)) ? ((((v1) & 0xF0) >> 4) - (((v2) & 0xF0) >> 4)) : ((((v2) & 0xF0) >> 4) - (((v1) & 0xF0) >> 4))
 
 // ordinea in Mat::data este blue, breen, red
 typedef struct
@@ -15,6 +15,13 @@ typedef struct
 color_t* CPU_pixelWeight;
 color_t* CPU_imageData;
 size_t CPU_height, CPU_width;
+
+cudaStream_t stream1_GPU, stream2_GPU;
+uint8_t* deviceImageData_GPU;
+uint8_t* devicePixelWeight_GPU;
+uint32_t* deviceBitCount_GPU;
+uint32_t imageCapacity_GPU;
+uint8_t* deviceDataToEncode_GPU;
 
 // returns the number of bytes that can be encoded in the image
 uint32_t analyzeImage_CPU(uint8_t* imageData, size_t height, size_t width)
@@ -245,4 +252,169 @@ void cleanUp_CPU()
 	{
 		delete[] CPU_pixelWeight;
 	}
+}
+
+__global__ void calculatePixelWeight_Kernel(color_t* imageData, color_t* pixelWeight, size_t height, size_t width)
+{
+	size_t index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+	
+	if (index < height * width)
+	{
+		color_t currentColor = imageData[index];
+		color_t maxDelta = { 0, 0, 0 };
+
+		// north
+		if (index >= width)
+		{
+			color_t colorNorth = imageData[index - width];
+
+			color_t delta;
+			delta.RED = getDelta(currentColor.RED, colorNorth.RED);
+			delta.GREEN = getDelta(currentColor.GREEN, colorNorth.GREEN);
+			delta.BLUE = getDelta(currentColor.BLUE, colorNorth.BLUE);
+
+			if (maxDelta.RED < delta.RED)
+			{
+				maxDelta.RED = delta.RED;
+			}
+			if (maxDelta.GREEN < delta.GREEN)
+			{
+				maxDelta.GREEN = delta.GREEN;
+			}
+			if (maxDelta.BLUE < delta.BLUE)
+			{
+				maxDelta.BLUE = delta.BLUE;
+			}
+		}
+
+		// south
+		if (index < (width * (height - 1)))
+		{
+			color_t colorSouth = imageData[index + width];
+
+			color_t delta;
+			delta.RED = getDelta(currentColor.RED, colorSouth.RED);
+			delta.GREEN = getDelta(currentColor.GREEN, colorSouth.GREEN);
+			delta.BLUE = getDelta(currentColor.BLUE, colorSouth.BLUE);
+
+			if (maxDelta.RED < delta.RED)
+			{
+				maxDelta.RED = delta.RED;
+			}
+			if (maxDelta.GREEN < delta.GREEN)
+			{
+				maxDelta.GREEN = delta.GREEN;
+			}
+			if (maxDelta.BLUE < delta.BLUE)
+			{
+				maxDelta.BLUE = delta.BLUE;
+			}
+		}
+
+		// west
+		if (index % width != 0)
+		{
+			color_t colorWest = imageData[index - 1];
+
+			color_t delta;
+			delta.RED = getDelta(currentColor.RED, colorWest.RED);
+			delta.GREEN = getDelta(currentColor.GREEN, colorWest.GREEN);
+			delta.BLUE = getDelta(currentColor.BLUE, colorWest.BLUE);
+
+			if (maxDelta.RED < delta.RED)
+			{
+				maxDelta.RED = delta.RED;
+			}
+			if (maxDelta.GREEN < delta.GREEN)
+			{
+				maxDelta.GREEN = delta.GREEN;
+			}
+			if (maxDelta.BLUE < delta.BLUE)
+			{
+				maxDelta.BLUE = delta.BLUE;
+			}
+		}
+
+		// east
+		if (((index + 1) % width) != 0)
+		{
+			color_t colorEast = imageData[index + 1];
+
+			color_t delta;
+			delta.RED = getDelta(currentColor.RED, colorEast.RED);
+			delta.GREEN = getDelta(currentColor.GREEN, colorEast.GREEN);
+			delta.BLUE = getDelta(currentColor.BLUE, colorEast.BLUE);
+
+			if (maxDelta.RED < delta.RED)
+			{
+				maxDelta.RED = delta.RED;
+			}
+			if (maxDelta.GREEN < delta.GREEN)
+			{
+				maxDelta.GREEN = delta.GREEN;
+			}
+			if (maxDelta.BLUE < delta.BLUE)
+			{
+				maxDelta.BLUE = delta.BLUE;
+			}
+		}
+
+		maxDelta.RED = (maxDelta.RED >= 13) ? 4 : ((maxDelta.RED >= 6) ? 3 : ((maxDelta.RED >= 2) ? 2 : 1));
+		maxDelta.GREEN = (maxDelta.GREEN >= 13) ? 4 : ((maxDelta.GREEN >= 6) ? 3 : ((maxDelta.GREEN >= 2) ? 2 : 1));
+		maxDelta.BLUE = (maxDelta.BLUE >= 13) ? 4 : ((maxDelta.BLUE >= 6) ? 3 : ((maxDelta.BLUE >= 2) ? 2 : 1));
+
+		pixelWeight[index] = maxDelta;
+	}
+}
+
+__global__ void countBits_Kernel(uint8_t* pixelWeight, uint32_t* bitCount, size_t streamSize)
+{
+	bitCount[0] = pixelWeight[0];
+	for (size_t i = 1; i < streamSize; ++i)
+	{
+		bitCount[i] = bitCount[i - 1] + pixelWeight[i];
+	}
+}
+
+void startImageAnalisys_GPU(uint8_t* imageData, size_t height, size_t width)
+{
+	cudaDeviceReset();
+
+	cudaStreamCreate(&stream1_GPU);
+
+	cudaMalloc(&deviceImageData_GPU, height * width * sizeof(color_t));
+	cudaMalloc(&devicePixelWeight_GPU, height * width * sizeof(color_t));
+	cudaMalloc(&deviceBitCount_GPU, height * width * sizeof(uint32_t) * 3);
+
+	cudaHostRegister(imageData, height * width * sizeof(color_t), 0); // research flags
+	cudaMemcpyAsync(deviceImageData_GPU, imageData, height * width * sizeof(color_t), cudaMemcpyHostToDevice, stream1_GPU);
+
+	cudaDeviceProp prop;
+	cudaGetDeviceProperties(&prop, 0);
+
+	size_t threadCount = 4 * prop.warpSize;
+	size_t blockCount = height * width / threadCount;
+
+	std::cout << "Blocks: " << blockCount << std::endl << "Threads: " << threadCount << std::endl;
+
+	calculatePixelWeight_Kernel<<<blockCount, threadCount, 0, stream1_GPU>>>((color_t*)deviceImageData_GPU, (color_t*)devicePixelWeight_GPU, height, width);
+	countBits_Kernel<<<1, 1, 0, stream1_GPU>>>(devicePixelWeight_GPU, deviceBitCount_GPU, height * width * 3);
+
+	cudaMemcpyAsync(&imageCapacity_GPU, &deviceBitCount_GPU[height * width * 3 - 1], sizeof(uint32_t), cudaMemcpyDeviceToHost, stream1_GPU);
+}
+
+void initiateDataTransfer_GPU(uint8_t* streamToEncode, size_t streamSize)
+{
+	cudaStreamCreate(&stream2_GPU);
+
+	cudaMalloc(&deviceDataToEncode_GPU, streamSize);
+	cudaHostRegister(streamToEncode, streamSize, 0);
+
+	cudaMemcpyAsync(deviceDataToEncode_GPU, streamToEncode, streamSize, cudaMemcpyHostToDevice, stream2_GPU);
+}
+
+uint32_t getImageCapacity_GPU()
+{
+	cudaStreamSynchronize(stream1_GPU);
+	return (imageCapacity_GPU >>= 3);
 }
