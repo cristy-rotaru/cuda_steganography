@@ -17,11 +17,14 @@ color_t* CPU_imageData;
 size_t CPU_height, CPU_width;
 
 cudaStream_t stream1_GPU, stream2_GPU;
+size_t height_GPU, width_GPU;
 uint8_t* deviceImageData_GPU;
 uint8_t* devicePixelWeight_GPU;
 uint32_t* deviceBitCount_GPU;
+size_t* deviceIndexes_GPU;
 uint32_t imageCapacity_GPU;
-uint8_t* deviceDataToEncode_GPU;
+bool capacityRead_GPU;
+uint8_t* deviceHideData_GPU;
 
 // returns the number of bytes that can be encoded in the image
 uint32_t analyzeImage_CPU(uint8_t* imageData, size_t height, size_t width)
@@ -367,24 +370,126 @@ __global__ void calculatePixelWeight_Kernel(color_t* imageData, color_t* pixelWe
 	}
 }
 
-__global__ void countBits_Kernel(uint8_t* pixelWeight, uint32_t* bitCount, size_t streamSize)
+__global__ void countBits_Kernel(uint8_t* pixelWeight, uint32_t* bitCount, size_t* indexes, size_t streamSize)
 {
 	bitCount[0] = pixelWeight[0];
+	indexes[0] = 0;
+
+	uint32_t currentIndex = 0;
+
 	for (size_t i = 1; i < streamSize; ++i)
 	{
 		bitCount[i] = bitCount[i - 1] + pixelWeight[i];
+
+		if ((bitCount[i] >> 3) > currentIndex)
+		{
+			currentIndex = bitCount[i] >> 3;
+			if (bitCount[i] & 0x07)
+			{
+				indexes[currentIndex] = i;
+			}
+			else
+			{
+				indexes[currentIndex] = i + 1;
+			}
+		}
+	}
+}
+
+__global__ void embedImage_Kernel(uint8_t* imageData, uint8_t* pixelWeight, uint32_t* bitCount, uint8_t* stream, size_t streamSize, size_t imageSize)
+{
+	size_t index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (index < imageSize)
+	{
+		uint8_t pData = imageData[index];
+		uint8_t pWeight = pixelWeight[index];
+		uint32_t bitsWritten = bitCount[index] - pWeight;
+
+		uint32_t streamIndex = bitsWritten >> 3;
+		uint8_t bitIndex = bitsWritten & 0x07;
+
+		uint8_t mask = (1 << pWeight) - 1;
+
+		if (streamIndex < streamSize)
+		{
+			uint8_t writeData = 0;
+
+			if (8 - bitIndex >= pWeight)
+			{
+				uint8_t shift = 8 - bitIndex - pWeight;
+				writeData = (stream[streamIndex] & (mask << shift)) >> shift;
+			}
+			else
+			{
+				uint8_t shift = pWeight + bitIndex - 8;
+				writeData = (stream[streamIndex] & (mask >> shift)) << shift;
+				if (streamIndex < streamSize - 1)
+				{
+					shift = 8 - shift;
+					writeData |= (stream[streamIndex + 1] & (mask << shift)) >> shift;
+				}
+			}
+
+			pData &= ~mask;
+			pData |= writeData & mask;
+
+			imageData[index] = pData;
+		}
+	}
+}
+
+__global__ void extractData_Kernel(uint8_t* extractedData, uint8_t* imageData, uint8_t* pixelWeights, uint32_t* bitCount, size_t* indexes, uint32_t maxCapacity)
+{
+	uint32_t index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (index < maxCapacity)
+	{
+		size_t pIndex = indexes[index];
+
+		uint32_t totalBitsRead = bitCount[pIndex];
+		uint8_t bitsRead = 0;
+		uint8_t bitsToRead = totalBitsRead & 0x07;
+
+		uint8_t readData = 0;
+
+		while (bitsRead < 8)
+		{
+			uint8_t mask = (1 << bitsToRead) - 1;
+			uint8_t newData = imageData[pIndex] & mask;
+
+			int8_t shift = 8 - bitsRead - bitsToRead;
+			if (shift >= 0)
+			{
+				readData |= newData << shift;
+			}
+			else
+			{
+				shift = -shift;
+				readData |= newData >> shift;
+			}
+
+			++pIndex;
+			bitsRead += bitsToRead;
+			bitsToRead = pixelWeights[pIndex];
+		}
+
+		extractedData[index] = readData;
 	}
 }
 
 void startImageAnalisys_GPU(uint8_t* imageData, size_t height, size_t width)
 {
-	cudaDeviceReset();
-
 	cudaStreamCreate(&stream1_GPU);
+	cudaStreamCreate(&stream2_GPU);
+
+	height_GPU = height;
+	width_GPU = width;
 
 	cudaMalloc(&deviceImageData_GPU, height * width * sizeof(color_t));
 	cudaMalloc(&devicePixelWeight_GPU, height * width * sizeof(color_t));
 	cudaMalloc(&deviceBitCount_GPU, height * width * sizeof(uint32_t) * 3);
+	cudaMalloc(&deviceIndexes_GPU, height * width * sizeof(size_t) * 3);
 
 	cudaHostRegister(imageData, height * width * sizeof(color_t), 0); // research flags
 	cudaMemcpyAsync(deviceImageData_GPU, imageData, height * width * sizeof(color_t), cudaMemcpyHostToDevice, stream1_GPU);
@@ -394,27 +499,113 @@ void startImageAnalisys_GPU(uint8_t* imageData, size_t height, size_t width)
 
 	size_t threadCount = 4 * prop.warpSize;
 	size_t blockCount = height * width / threadCount;
-
-	std::cout << "Blocks: " << blockCount << std::endl << "Threads: " << threadCount << std::endl;
+	if (blockCount * threadCount < height * width)
+	{
+		++blockCount;
+	}
 
 	calculatePixelWeight_Kernel<<<blockCount, threadCount, 0, stream1_GPU>>>((color_t*)deviceImageData_GPU, (color_t*)devicePixelWeight_GPU, height, width);
-	countBits_Kernel<<<1, 1, 0, stream1_GPU>>>(devicePixelWeight_GPU, deviceBitCount_GPU, height * width * 3);
+	countBits_Kernel<<<1, 1, 0, stream1_GPU>>>(devicePixelWeight_GPU, deviceBitCount_GPU, deviceIndexes_GPU, height * width * 3);
+
+	capacityRead_GPU = false;
 
 	cudaMemcpyAsync(&imageCapacity_GPU, &deviceBitCount_GPU[height * width * 3 - 1], sizeof(uint32_t), cudaMemcpyDeviceToHost, stream1_GPU);
 }
 
 void initiateDataTransfer_GPU(uint8_t* streamToEncode, size_t streamSize)
 {
-	cudaStreamCreate(&stream2_GPU);
-
-	cudaMalloc(&deviceDataToEncode_GPU, streamSize);
+	cudaMalloc(&deviceHideData_GPU, streamSize);
 	cudaHostRegister(streamToEncode, streamSize, 0);
 
-	cudaMemcpyAsync(deviceDataToEncode_GPU, streamToEncode, streamSize, cudaMemcpyHostToDevice, stream2_GPU);
+	cudaMemcpyAsync(deviceHideData_GPU, streamToEncode, streamSize, cudaMemcpyHostToDevice, stream2_GPU);
 }
 
 uint32_t getImageCapacity_GPU()
 {
-	cudaStreamSynchronize(stream1_GPU);
-	return (imageCapacity_GPU >>= 3);
+	if (capacityRead_GPU == false)
+	{
+		cudaStreamSynchronize(stream1_GPU);
+
+		imageCapacity_GPU >>= 3;
+		capacityRead_GPU = true;
+	}
+	
+	return imageCapacity_GPU;
+}
+
+void hide_GPU(uint8_t* imageData, size_t streamSize)
+{
+	cudaDeviceProp prop;
+	cudaGetDeviceProperties(&prop, 0);
+
+	size_t threadCount = 4 * prop.warpSize;
+	size_t blockCount = 3 * height_GPU * width_GPU / threadCount;
+	if (blockCount * threadCount < 3 * height_GPU * width_GPU)
+	{
+		++blockCount;
+	}
+
+	embedImage_Kernel<<<blockCount, threadCount, 0, stream2_GPU>>>(deviceImageData_GPU, devicePixelWeight_GPU, deviceBitCount_GPU, deviceHideData_GPU, streamSize, height_GPU * width_GPU * 3);
+
+	cudaMemcpyAsync(imageData, deviceImageData_GPU, height_GPU * width_GPU * 3, cudaMemcpyDeviceToHost, stream2_GPU);
+
+	cudaStreamSynchronize(stream2_GPU);
+}
+
+uint32_t extract_GPU(uint8_t*& stream)
+{
+	cudaMalloc(&deviceHideData_GPU, imageCapacity_GPU);
+
+	cudaDeviceProp prop;
+	cudaGetDeviceProperties(&prop, 0);
+
+	size_t threadCount = 4 * prop.warpSize;
+	size_t blockCount = imageCapacity_GPU / threadCount;
+	if (blockCount * threadCount < imageCapacity_GPU)
+	{
+		++blockCount;
+	}
+
+	uint8_t header[8];
+
+	extractData_Kernel<<<blockCount, threadCount, 0, stream2_GPU>>>(deviceHideData_GPU, deviceImageData_GPU, devicePixelWeight_GPU, deviceBitCount_GPU, deviceIndexes_GPU, imageCapacity_GPU);
+	cudaMemcpyAsync(header, deviceHideData_GPU, 8, cudaMemcpyDeviceToHost, stream2_GPU);
+
+	cudaStreamSynchronize(stream2_GPU);
+
+	if (header[0] != 's' || header[1] != 't' || header[2] != 'e' || header[3] != 'g')
+	{
+		stream = new uint8_t[8];
+		memcpy(stream, header, 8);
+		return 0;
+	}
+	else
+	{
+		uint32_t streamSize = 0;
+		streamSize |= header[4] << 24;
+		streamSize |= header[5] << 16;
+		streamSize |= header[6] << 8;
+		streamSize |= header[7];
+
+		stream = new uint8_t[streamSize + 8];
+
+		memcpy(stream, header, 8);
+		cudaMemcpy(&stream[8], &deviceHideData_GPU[8], streamSize, cudaMemcpyDeviceToHost);
+
+		return streamSize + 8;
+	}
+}
+
+void cleanUp_GPU()
+{
+	cudaDeviceSynchronize();
+
+	cudaFree(deviceImageData_GPU);
+	cudaFree(devicePixelWeight_GPU);
+	cudaFree(deviceBitCount_GPU);
+	cudaFree(deviceIndexes_GPU);
+	cudaFree(deviceHideData_GPU);
+
+	cudaStreamDestroy(stream1_GPU);
+	cudaStreamDestroy(stream2_GPU);
 }
