@@ -24,7 +24,7 @@ void embedOnCPU(std::string inputImageFile, std::string fileToEmbed, std::string
 	fileToHide.seekg(0, std::ios::end);
 	sPos = fileToHide.tellg() - sPos;
 	fileToHide.seekg(0);
-	uint32_t streamSize = sPos;
+	size_t streamSize = sPos;
 
 	if (maxStreamSize < streamSize + 8)
 	{
@@ -102,7 +102,7 @@ void embedOnGPU(std::string inputImageFile, std::string fileToEmbed, std::string
 	fileToHide.seekg(0, std::ios::end);
 	sPos = fileToHide.tellg() - sPos;
 	fileToHide.seekg(0);
-	uint32_t streamSize = sPos;
+	size_t streamSize = sPos;
 
 	uint8_t* streamToHide = new uint8_t[streamSize + 8]; // add 8 for header
 	streamToHide[0] = 's';

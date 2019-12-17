@@ -396,45 +396,52 @@ __global__ void countBits_Kernel(uint8_t* pixelWeight, uint32_t* bitCount, size_
 	}
 }
 
-__global__ void embedImage_Kernel(uint8_t* imageData, uint8_t* pixelWeight, uint32_t* bitCount, uint8_t* stream, size_t streamSize, size_t imageSize)
+__global__ void embedImage_Kernel(uint8_t* imageData, uint8_t* pixelWeight, uint32_t* bitCount, size_t* indexes, uint8_t* stream, size_t streamSize)
 {
 	size_t index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
 
-	if (index < imageSize)
+	if (index < streamSize)
 	{
-		uint8_t pData = imageData[index];
-		uint8_t pWeight = pixelWeight[index];
-		uint32_t bitsWritten = bitCount[index] - pWeight;
+		size_t pIndex = indexes[index];
 
-		uint32_t streamIndex = bitsWritten >> 3;
-		uint8_t bitIndex = bitsWritten & 0x07;
+		uint32_t totalBitsWritten = bitCount[pIndex];
+		uint8_t bitsWritten = 0;
+		uint8_t bitsToWrite = totalBitsWritten & 0x07;
 
-		uint8_t mask = (1 << pWeight) - 1;
+		uint8_t streamData = stream[index];
 
-		if (streamIndex < streamSize)
+		while (bitsWritten < 8)
 		{
+			uint8_t pWeight = pixelWeight[pIndex];
+
 			uint8_t writeData = 0;
 
-			if (8 - bitIndex >= pWeight)
-			{
-				uint8_t shift = 8 - bitIndex - pWeight;
-				writeData = (stream[streamIndex] & (mask << shift)) >> shift;
-			}
-			else
-			{
-				uint8_t shift = pWeight + bitIndex - 8;
-				writeData = (stream[streamIndex] & (mask >> shift)) << shift;
-				if (streamIndex < streamSize - 1)
-				{
-					shift = 8 - shift;
-					writeData |= (stream[streamIndex + 1] & (mask << shift)) >> shift;
-				}
+			if (bitsToWrite < pWeight)
+			{ // needs to write part of the previous stream byte
+				uint8_t bitsFromPrevious = pWeight - bitsToWrite;
+				uint8_t previousMask = ((1 << bitsFromPrevious) - 1);
+				
+				writeData = (stream[index - 1] & previousMask) << bitsToWrite;
 			}
 
-			pData &= ~mask;
-			pData |= writeData & mask;
+			uint8_t mask = (1 << bitsToWrite) - 1;
+			uint8_t shift = 8 - bitsToWrite;
 
-			imageData[index] = pData;
+			writeData |= (streamData & (mask << shift)) >> shift;
+
+			streamData <<= bitsToWrite;
+
+			uint8_t writeMask = (1 << pWeight) - 1;
+			imageData[pIndex] = (imageData[pIndex] & ~writeMask) | writeData;
+
+			bitsWritten += bitsToWrite;
+			++pIndex;
+			bitsToWrite = pixelWeight[pIndex];
+
+			if (bitsToWrite > (8 - bitsWritten))
+			{
+				break;
+			}
 		}
 	}
 }
@@ -539,13 +546,13 @@ void hide_GPU(uint8_t* imageData, size_t streamSize)
 	cudaGetDeviceProperties(&prop, 0);
 
 	size_t threadCount = 4 * prop.warpSize;
-	size_t blockCount = 3 * height_GPU * width_GPU / threadCount;
-	if (blockCount * threadCount < 3 * height_GPU * width_GPU)
+	size_t blockCount = imageCapacity_GPU / threadCount;
+	if (blockCount * threadCount < imageCapacity_GPU)
 	{
 		++blockCount;
 	}
 
-	embedImage_Kernel<<<blockCount, threadCount, 0, stream2_GPU>>>(deviceImageData_GPU, devicePixelWeight_GPU, deviceBitCount_GPU, deviceHideData_GPU, streamSize, height_GPU * width_GPU * 3);
+	embedImage_Kernel<<<blockCount, threadCount, 0, stream2_GPU>>>(deviceImageData_GPU, devicePixelWeight_GPU, deviceBitCount_GPU, deviceIndexes_GPU, deviceHideData_GPU, streamSize);
 
 	cudaMemcpyAsync(imageData, deviceImageData_GPU, height_GPU * width_GPU * 3, cudaMemcpyDeviceToHost, stream2_GPU);
 
