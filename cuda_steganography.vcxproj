@@ -92,7 +92,11 @@
     <Image Include="image.jpg" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="OptionParser.h" />
     <ClInclude Include="steganographyOnCuda.cuh" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="OptionParser.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

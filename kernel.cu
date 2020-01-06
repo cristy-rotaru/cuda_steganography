@@ -1,4 +1,5 @@
 #include "steganographyOnCuda.cuh"
+#include "OptionParser.h"
 #include <exception>
 #include <fstream>
 
@@ -8,7 +9,7 @@ void embedOnCPU(std::string inputImageFile, std::string fileToEmbed, std::string
 
 	if (image.data == nullptr)
 	{
-		throw "Invalid image file!";
+		throw std::exception("Invalid image file!");
 	}
 
 	uint32_t maxStreamSize = analyzeImage_CPU(image.data, image.size().height, image.size().width);
@@ -17,7 +18,7 @@ void embedOnCPU(std::string inputImageFile, std::string fileToEmbed, std::string
 
 	if (!fileToHide)
 	{
-		throw "Unable to open file!";
+		throw std::exception("Unable to open file!");
 	}
 	// computing file size
 	std::streampos sPos = fileToHide.tellg();
@@ -28,7 +29,7 @@ void embedOnCPU(std::string inputImageFile, std::string fileToEmbed, std::string
 
 	if (maxStreamSize < streamSize + 8)
 	{
-		throw "The file does not fit inside the image!";
+		throw std::exception("The file does not fit inside the image!");
 	}
 
 	uint8_t* streamToHide = new uint8_t[streamSize + 8]; // add 8 for header
@@ -59,7 +60,7 @@ void extractOnCPU(std::string inputImageFile, std::string extractedFile)
 
 	if (image.data == nullptr)
 	{
-		throw "Invalid image file!";
+		throw std::exception("Invalid image file!");
 	}
 
 	analyzeImage_CPU(image.data, image.size().height, image.size().width);
@@ -68,7 +69,7 @@ void extractOnCPU(std::string inputImageFile, std::string extractedFile)
 	uint32_t streamSize = extract_CPU(extractedStream);
 	if (streamSize == 0)
 	{
-		throw "The image does not contain anything!";
+		throw std::exception("The image does not contain anything!");
 	}
 
 	std::ofstream recoveredFile(extractedFile, std::ios_base::out | std::ios_base::binary);
@@ -86,7 +87,7 @@ void embedOnGPU(std::string inputImageFile, std::string fileToEmbed, std::string
 
 	if (image.data == nullptr)
 	{
-		throw "Invalid image file!";
+		throw std::exception("Invalid image file!");
 	}
 
 	startImageAnalisys_GPU(image.data, image.size().height, image.size().width);
@@ -95,7 +96,7 @@ void embedOnGPU(std::string inputImageFile, std::string fileToEmbed, std::string
 
 	if (!fileToHide)
 	{
-		throw "Unable to open file!";
+		throw std::exception("Unable to open file!");
 	}
 	// computing file size
 	std::streampos sPos = fileToHide.tellg();
@@ -121,7 +122,7 @@ void embedOnGPU(std::string inputImageFile, std::string fileToEmbed, std::string
 
 	if (maxStreamSize < streamSize + 8)
 	{
-		throw "The file does not fit inside the image!";
+		throw std::exception("The file does not fit inside the image!");
 	}
 
 	// will modify image
@@ -140,7 +141,7 @@ void extractOnGPU(std::string inputImageFile, std::string extractedFile)
 
 	if (image.data == nullptr)
 	{
-		throw "Invalid image file!";
+		throw std::exception("Invalid image file!");
 	}
 
 	startImageAnalisys_GPU(image.data, image.size().height, image.size().width);
@@ -150,7 +151,7 @@ void extractOnGPU(std::string inputImageFile, std::string extractedFile)
 	uint32_t streamSize = extract_GPU(extractedStream);
 	if (streamSize == 0)
 	{
-		throw "The image does not contain anything!";
+		throw std::exception("The image does not contain anything!");
 	}
 
 	cleanUp_GPU();
@@ -169,52 +170,95 @@ int main(int argc, char **argv)
 
 	try
 	{
-		std::cout << "Embedding on CPU: ";
+		OptionParser parser;
+		parser.parse(argc, argv);
+		if (parser.getEncode())
+		{
+			if (parser.getCPUflag())
+			{
+				std::cout << "Embedding on CPU: ";
 
-		std::chrono::high_resolution_clock::time_point startCPU = std::chrono::high_resolution_clock::now();
-		embedOnCPU("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/test_images/abstract01.jpg", "D:/Music/Alive.mp3", "D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result_CPU.bmp");
-		std::chrono::high_resolution_clock::time_point endCPU = std::chrono::high_resolution_clock::now();
+				embedOnCPU(parser.getInputFileName(), parser.getFileToHide(), parser.getOutputFileName());
+				std::cout << "Done!\n";
+			}
+			// ------------------------------------------------------------------------------------------------------ //
 
-		std::chrono::high_resolution_clock::duration elapsedCPU = endCPU - startCPU;
+			if (parser.getGPUflag())
+			{
+				std::cout << "Embedding on GPU: ";
 
-		std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedCPU).count() << "us" << std::endl;
+				embedOnGPU(parser.getInputFileName(), parser.getFileToHide(), parser.getOutputFileName());
+				std::cout << "Done!\n";
+			}
+			// ------------------------------------------------------------------------------------------------------ //
 
-		// ------------------------------------------------------------------------------------------------------ //
+			if (parser.getPerformanceFlag())
+			{
+				//Do both, compare timings
+				std::cout << "Embedding on GPU: ";
 
-		std::cout << "Embedding on GPU: ";
+				std::chrono::high_resolution_clock::time_point startGPU = std::chrono::high_resolution_clock::now();
+				embedOnGPU(parser.getInputFileName(), parser.getFileToHide(), parser.getOutputFileName());
+				std::chrono::high_resolution_clock::time_point endGPU = std::chrono::high_resolution_clock::now();
 
-		std::chrono::high_resolution_clock::time_point startGPU = std::chrono::high_resolution_clock::now();
-		embedOnGPU("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/test_images/abstract01.jpg", "D:/Music/Alive.mp3", "D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result_GPU.bmp");
-		std::chrono::high_resolution_clock::time_point endGPU = std::chrono::high_resolution_clock::now();
+				std::chrono::high_resolution_clock::duration elapsedGPU = endGPU - startGPU;
 
-		std::chrono::high_resolution_clock::duration elapsedGPU = endGPU - startGPU;
+				std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedGPU).count() << "us" << std::endl;
 
-		std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedGPU).count() << "us" << std::endl;
+				std::cout << "Embedding on CPU: ";
 
-		// ------------------------------------------------------------------------------------------------------ //
+				std::chrono::high_resolution_clock::time_point startCPU = std::chrono::high_resolution_clock::now();
+				embedOnCPU(parser.getInputFileName(), parser.getFileToHide(), parser.getOutputFileName());
+				std::chrono::high_resolution_clock::time_point endCPU = std::chrono::high_resolution_clock::now();
 
-		std::cout << "Extracting on CPU: ";
+				std::chrono::high_resolution_clock::duration elapsedCPU = endCPU - startCPU;
 
-		startCPU = std::chrono::high_resolution_clock::now();
-		extractOnCPU("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result_CPU.bmp", "D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result_CPU.mp3");
-		endCPU = std::chrono::high_resolution_clock::now();
+				std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedCPU).count() << "us" << std::endl;
+			}
+		}
+		else
+		{
+			if (parser.getCPUflag())
+			{
+				std::cout << "Extracting on CPU: ";
 
-		elapsedCPU = endCPU - startCPU;
+				extractOnCPU(parser.getInputFileName(), parser.getOutputFileName());
+				std::cout << "Done!\n";
+				// ------------------------------------------------------------------------------------------------------ //
+			}
+			
+			if (parser.getGPUflag())
+			{
+				std::cout << "Extracting on GPU: ";
 
-		std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedCPU).count() << "us" << std::endl;
+				extractOnCPU(parser.getInputFileName(), parser.getOutputFileName());
+				std::cout << "Done!\n";
+			}
 
-		// ------------------------------------------------------------------------------------------------------ //
+			if (parser.getPerformanceFlag())
+			{
+				std::cout << "Extracting on GPU: ";
 
-		std::cout << "Extracting on GPU: ";
+				std::chrono::high_resolution_clock::time_point startGPU = std::chrono::high_resolution_clock::now();
+				extractOnCPU(parser.getInputFileName(), parser.getOutputFileName());
+				std::chrono::high_resolution_clock::time_point endGPU = std::chrono::high_resolution_clock::now();
 
-		startGPU = std::chrono::high_resolution_clock::now();
-		extractOnCPU("D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result_GPU.bmp", "D:/Documents/Faculty/PGPU/Tema/cuda_steganography/result_GPU.mp3");
-		endGPU = std::chrono::high_resolution_clock::now();
+				std::chrono::high_resolution_clock::duration elapsedGPU = endGPU - startGPU;
 
-		elapsedGPU = endGPU - startGPU;
+				std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedGPU).count() << "us" << std::endl;
 
-		std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedGPU).count() << "us" << std::endl;
+				std::cout << "Extracting on CPU: ";
 
+				std::chrono::high_resolution_clock::time_point startCPU = std::chrono::high_resolution_clock::now();
+				extractOnCPU(parser.getInputFileName(), parser.getOutputFileName());
+				std::chrono::high_resolution_clock::time_point endCPU = std::chrono::high_resolution_clock::now();
+
+				std::chrono::high_resolution_clock::duration elapsedCPU = endCPU - startCPU;
+
+				std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedCPU).count() << "us" << std::endl;
+
+			}
+		}
 		system("pause");
 	}
 	catch (std::exception exc)
