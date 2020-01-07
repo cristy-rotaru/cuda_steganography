@@ -22,6 +22,7 @@ uint8_t* deviceImageData_GPU;
 uint8_t* devicePixelWeight_GPU;
 uint32_t* deviceBitCount_GPU;
 size_t* deviceIndexes_GPU;
+uint32_t* deviceLastPixelWritten_GPU;
 uint32_t imageCapacity_GPU;
 bool capacityRead_GPU;
 uint8_t* deviceHideData_GPU;
@@ -143,6 +144,8 @@ uint8_t* hide_CPU(uint8_t* stream, size_t streamSize)
 
 		bitsWritten += weight;
 	}
+
+	return imageData;
 }
 
 // will return the size of the stream
@@ -396,11 +399,11 @@ __global__ void countBits_Kernel(uint8_t* pixelWeight, uint32_t* bitCount, size_
 	}
 }
 
-__global__ void embedImage_Kernel(uint8_t* imageData, uint8_t* pixelWeight, uint32_t* bitCount, size_t* indexes, uint8_t* stream, size_t streamSize)
+__global__ void embedImage_Kernel(uint8_t* imageData, uint8_t* pixelWeight, uint32_t* bitCount, size_t* indexes, uint8_t* stream, size_t streamSize, uint32_t* lastPixelWritten)
 {
 	size_t index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
 
-	if (index < streamSize)
+	if (index <= streamSize)
 	{
 		size_t pIndex = indexes[index];
 
@@ -424,12 +427,19 @@ __global__ void embedImage_Kernel(uint8_t* imageData, uint8_t* pixelWeight, uint
 				writeData = (stream[index - 1] & previousMask) << bitsToWrite;
 			}
 
-			uint8_t mask = (1 << bitsToWrite) - 1;
-			uint8_t shift = 8 - bitsToWrite;
+			if (index != streamSize)
+			{
+				uint8_t mask = (1 << bitsToWrite) - 1;
+				uint8_t shift = 8 - bitsToWrite;
 
-			writeData |= (streamData & (mask << shift)) >> shift;
+				writeData |= (streamData & (mask << shift)) >> shift;
 
-			streamData <<= bitsToWrite;
+				streamData <<= bitsToWrite;
+			}
+			else
+			{
+				lastPixelWritten[0] = pIndex;
+			}
 
 			uint8_t writeMask = (1 << pWeight) - 1;
 			imageData[pIndex] = (imageData[pIndex] & ~writeMask) | writeData;
@@ -438,7 +448,7 @@ __global__ void embedImage_Kernel(uint8_t* imageData, uint8_t* pixelWeight, uint
 			++pIndex;
 			bitsToWrite = pixelWeight[pIndex];
 
-			if (bitsToWrite > (8 - bitsWritten))
+			if ((bitsToWrite > (8 - bitsWritten)) || (index == streamSize))
 			{
 				break;
 			}
@@ -542,6 +552,8 @@ uint32_t getImageCapacity_GPU()
 
 void hide_GPU(uint8_t* imageData, size_t streamSize)
 {
+	cudaMalloc(&deviceLastPixelWritten_GPU, sizeof(uint32_t));
+
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties(&prop, 0);
 
@@ -552,9 +564,13 @@ void hide_GPU(uint8_t* imageData, size_t streamSize)
 		++blockCount;
 	}
 
-	embedImage_Kernel<<<blockCount, threadCount, 0, stream2_GPU>>>(deviceImageData_GPU, devicePixelWeight_GPU, deviceBitCount_GPU, deviceIndexes_GPU, deviceHideData_GPU, streamSize);
+	embedImage_Kernel<<<blockCount, threadCount, 0, stream2_GPU>>>(deviceImageData_GPU, devicePixelWeight_GPU, deviceBitCount_GPU, deviceIndexes_GPU, deviceHideData_GPU, streamSize, deviceLastPixelWritten_GPU);
 
-	cudaMemcpyAsync(imageData, deviceImageData_GPU, height_GPU * width_GPU * 3, cudaMemcpyDeviceToHost, stream2_GPU);
+	uint32_t pixelsWritten = 0;
+	cudaMemcpyAsync(&pixelsWritten, deviceLastPixelWritten_GPU, sizeof(uint32_t), cudaMemcpyDeviceToHost, stream2_GPU);
+	cudaStreamSynchronize(stream2_GPU);
+
+	cudaMemcpyAsync(imageData, deviceImageData_GPU, pixelsWritten + 1, cudaMemcpyDeviceToHost, stream2_GPU);
 
 	cudaStreamSynchronize(stream2_GPU);
 }
@@ -607,11 +623,35 @@ void cleanUp_GPU()
 {
 	cudaDeviceSynchronize();
 
-	cudaFree(deviceImageData_GPU);
-	cudaFree(devicePixelWeight_GPU);
-	cudaFree(deviceBitCount_GPU);
-	cudaFree(deviceIndexes_GPU);
-	cudaFree(deviceHideData_GPU);
+	if (deviceImageData_GPU != nullptr)
+	{
+		cudaFree(deviceImageData_GPU);
+	}
+
+	if (devicePixelWeight_GPU != nullptr)
+	{
+		cudaFree(devicePixelWeight_GPU);
+	}
+
+	if (deviceBitCount_GPU != nullptr)
+	{
+		cudaFree(deviceBitCount_GPU);
+	}
+
+	if (deviceIndexes_GPU != nullptr)
+	{
+		cudaFree(deviceIndexes_GPU);
+	}
+
+	if (deviceLastPixelWritten_GPU != nullptr)
+	{
+		cudaFree(deviceLastPixelWritten_GPU);
+	}
+
+	if (deviceHideData_GPU != nullptr)
+	{
+		cudaFree(deviceHideData_GPU);
+	}
 
 	cudaStreamDestroy(stream1_GPU);
 	cudaStreamDestroy(stream2_GPU);
