@@ -195,20 +195,20 @@ int main(int argc, char **argv)
 			if (parser.getPerformanceFlag())
 			{
 				//Do both, compare timings
-				std::cout << "Embedding on GPU: ";
+				std::cout << "Embedding on CPU: ";
 
 				std::chrono::high_resolution_clock::time_point startGPU = std::chrono::high_resolution_clock::now();
-				embedOnGPU(parser.getInputFileName(), parser.getFileToHide(), parser.getOutputFileName());
+				embedOnCPU(parser.getInputFileName(), parser.getFileToHide(), parser.getOutputFileName());
 				std::chrono::high_resolution_clock::time_point endGPU = std::chrono::high_resolution_clock::now();
 
 				std::chrono::high_resolution_clock::duration elapsedGPU = endGPU - startGPU;
 
 				std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedGPU).count() << "us" << std::endl;
 
-				std::cout << "Embedding on CPU: ";
+				std::cout << "Embedding on GPU: ";
 
 				std::chrono::high_resolution_clock::time_point startCPU = std::chrono::high_resolution_clock::now();
-				embedOnCPU(parser.getInputFileName(), parser.getFileToHide(), parser.getOutputFileName());
+				embedOnGPU(parser.getInputFileName(), parser.getFileToHide(), parser.getOutputFileName());
 				std::chrono::high_resolution_clock::time_point endCPU = std::chrono::high_resolution_clock::now();
 
 				std::chrono::high_resolution_clock::duration elapsedCPU = endCPU - startCPU;
@@ -231,13 +231,13 @@ int main(int argc, char **argv)
 			{
 				std::cout << "Extracting on GPU: ";
 
-				extractOnCPU(parser.getInputFileName(), parser.getOutputFileName());
+				extractOnGPU(parser.getInputFileName(), parser.getOutputFileName());
 				std::cout << "Done!\n";
 			}
 
 			if (parser.getPerformanceFlag())
 			{
-				std::cout << "Extracting on GPU: ";
+				std::cout << "Extracting on CPU: ";
 
 				std::chrono::high_resolution_clock::time_point startGPU = std::chrono::high_resolution_clock::now();
 				extractOnCPU(parser.getInputFileName(), parser.getOutputFileName());
@@ -247,10 +247,10 @@ int main(int argc, char **argv)
 
 				std::cout << std::chrono::duration_cast<std::chrono::microseconds>(elapsedGPU).count() << "us" << std::endl;
 
-				std::cout << "Extracting on CPU: ";
+				std::cout << "Extracting on GPU: ";
 
 				std::chrono::high_resolution_clock::time_point startCPU = std::chrono::high_resolution_clock::now();
-				extractOnCPU(parser.getInputFileName(), parser.getOutputFileName());
+				extractOnGPU(parser.getInputFileName(), parser.getOutputFileName());
 				std::chrono::high_resolution_clock::time_point endCPU = std::chrono::high_resolution_clock::now();
 
 				std::chrono::high_resolution_clock::duration elapsedCPU = endCPU - startCPU;
